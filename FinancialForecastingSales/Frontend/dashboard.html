@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SARIMAX Forecast Dashboard</title>
+
+  <link rel="stylesheet" href="dashboard.css" />
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+  <style>
+    /* minimal inline styles to ensure layout if your CSS is different */
+    body { font-family: Inter, Arial, sans-serif; background:#f5f7fb; margin:0; padding:20px;}
+    .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:18px;}
+    .metrics-grid { display:flex; gap:18px; flex-wrap:wrap; margin-bottom:20px;}
+    .metric-card { background:#fff; padding:18px; border-radius:10px; box-shadow:0 4px 10px rgba(0,0,0,0.06); min-width:200px;}
+    .metric-label { color:#6b7280; font-size:13px; }
+    .metric-value { font-size:22px; font-weight:700; margin-top:6px; }
+    .main-content { display:flex; gap:24px; }
+    .chart-section { flex:1; background:#fff; padding:22px; border-radius:10px; box-shadow:0 6px 14px rgba(0,0,0,0.06);}
+    .sidebar { width:300px; }
+    .nav { display:flex; gap:8px; align-items:center; }
+    .year-selector { padding:6px 10px; }
+    button#assistantBtn { background:linear-gradient(90deg,#6b46c1,#4c6ef5); color:white; border:none; padding:8px 14px; border-radius:6px; cursor:pointer;}
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div>
+      <h1 style="margin:0 0 6px 0;">SARIMAX FORECAST DASHBOARD</h1>
+      <div class="nav">
+        <span style="color:#6b7280">Select Year:</span>
+        <select id="year-selector" class="year-selector">
+          <option value="2010">2010</option>
+          <option value="2011">2011</option>
+          <option value="2012" selected>2012</option>
+        </select>
+      </div>
+    </div>
+    <div>
+      <button id="assistantBtn">💬 Insights Assistant</button>
+    </div>
+  </div>
+
+  <div class="metrics-grid" id="metricsGrid">
+    <div class="metric-card"><div class="metric-label">Actual Revenue</div><div id="revenue" class="metric-value">—</div></div>
+    <div class="metric-card"><div class="metric-label">Forecasted Revenue</div><div id="forecast" class="metric-value">—</div></div>
+    <div class="metric-card"><div class="metric-label">Profit / Loss</div><div id="profitloss" class="metric-value">—</div></div>
+    <div class="metric-card"><div class="metric-label">Margin (MAPE ~)</div><div id="margin" class="metric-value">—</div></div>
+    <div class="metric-card"><div class="metric-label">Quarterly Profit</div><div id="qprofit" class="metric-value">—</div></div>
+    <div class="metric-card"><div class="metric-label">Seasonal Period</div><div class="metric-value">52 Weeks</div></div>
+  </div>
+
+  <div class="main-content">
+    <div class="chart-section">
+      <h3 style="margin:0 0 12px 0;">ACTUAL VS FORECASTED SALES (Jan → Dec)</h3>
+      <canvas id="forecastChart" height="140"></canvas>
+
+      <h3 style="margin:20px 0 12px 0;">TREND / QUARTERLY PROFIT</h3>
+      <canvas id="trendChart" height="100"></canvas>
+    </div>
+
+    <div class="sidebar">
+      <div style="background:#fff;padding:16px;border-radius:8px;box-shadow:0 6px 14px rgba(0,0,0,0.06)">
+        <div style="font-weight:700">Model Type</div>
+        <div>SARIMAX (1,1,1)(1,1,1,52)</div>
+      </div>
+      <div style="height:12px"></div>
+      <div style="background:#fff;padding:16px;border-radius:8px;box-shadow:0 6px 14px rgba(0,0,0,0.06)">
+        <div style="font-weight:700">Stationarity</div>
+        <div>Stable ✅</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Assistant modal -->
+  <div id="assistantModal" style="display:none; position:fixed; right:20px; bottom:20px; width:360px; height:420px; background:#fff; border-radius:10px; box-shadow:0 10px 30px rgba(0,0,0,0.2); overflow:hidden; z-index:9999">
+    <div style="background:#4c6ef5;color:#fff;padding:12px;font-weight:700">Insights Assistant</div>
+    <div id="assistantMessages" style="height:300px; overflow:auto; padding:10px;"></div>
+    <div style="display:flex; gap:8px; padding:10px;">
+      <input id="assistantText" placeholder="Ask a question..." style="flex:1;padding:8px;border:1px solid #ddd;border-radius:6px" />
+      <button id="assistantSend" style="background:#4c6ef5;color:#fff;border:none;padding:8px 12px;border-radius:6px">Send</button>
+    </div>
+  </div>
+
+<script>
+/* ========= Chart setup ========= */
+const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+const ctxF = document.getElementById("forecastChart").getContext("2d");
+const forecastChart = new Chart(ctxF, {
+  type: "line",
+  data: {
+    labels: months,
+    datasets: [
+      { label: "Actual Sales", data: [], borderColor: "#2ecc71", backgroundColor: "rgba(46,204,113,0.06)", tension: 0.4, pointRadius:3 },
+      { label: "Forecasted Sales", data: [], borderColor: "#3498db", backgroundColor: "rgba(52,152,219,0.06)", tension: 0.4, pointRadius:3 }
+    ]
+  },
+  options: {
+    responsive: true,
+    interaction: { mode: 'index', intersect: false },
+    plugins: { legend: { position: 'top' } },
+    scales: {
+      y: {
+        ticks: {
+          callback: function(value) { 
+            // format large numbers
+            if (value >= 1e9) return (value/1e9).toFixed(1) + "B";
+            if (value >= 1e6) return (value/1e6).toFixed(0) + "M";
+            if (value >= 1e3) return (value/1e3).toFixed(0) + "K";
+            return value;
+          }
+        }
+      }
+    }
+  }
+});
+
+const ctxT = document.getElementById("trendChart").getContext("2d");
+const trendChart = new Chart(ctxT, {
+  type: "bar",
+  data: { labels: ["Q1","Q2","Q3","Q4"], datasets: [{ label:"Quarterly Profit", data: [], backgroundColor:"#805ad5" }] },
+  options: { responsive:true }
+});
+
+/* ========= Helper to fetch and update ========= */
+async function updateDashboard(year) {
+  try {
+    const res = await fetch(`http://localhost:8000/metrics/${year}`);
+    const data = await res.json();
+
+    if (data.error) {
+      console.error("API error:", data.error);
+      alert("API error: " + data.error);
+      return;
+    }
+
+    // KPIs
+    document.getElementById("revenue").innerText = data.revenue || "—";
+    document.getElementById("forecast").innerText = data.forecasted || "—";
+    document.getElementById("profitloss").innerText = data.profitloss || "—";
+    document.getElementById("margin").innerText = data.margin || "—";
+
+    // monthly arrays (ensure length 12)
+    const monthly_actual = (data.monthly_revenue && data.monthly_revenue.length === 12) ? data.monthly_revenue : Array(12).fill(0);
+    const monthly_forecast = (data.monthly_forecast && data.monthly_forecast.length === 12) ? data.monthly_forecast : Array(12).fill(0);
+
+    // Update charts
+    forecastChart.data.datasets[0].data = monthly_actual;
+    forecastChart.data.datasets[1].data = monthly_forecast;
+    forecastChart.update();
+
+    // quarterly
+    const qprofit = (data.quarterly_profit && data.quarterly_profit.length === 4) ? data.quarterly_profit : [0,0,0,0];
+    document.getElementById("qprofit").innerText = qprofit.map(v => { 
+      if (Math.abs(v) >= 1e6) return Math.round(v/1e6) + "M"; 
+      if (Math.abs(v) >= 1e3) return Math.round(v/1e3) + "K";
+      return Math.round(v);
+    }).join(", ");
+
+    trendChart.data.datasets[0].data = qprofit;
+    trendChart.update();
+
+  } catch (err) {
+    console.error("Failed to fetch metrics:", err);
+    alert("Failed to fetch metrics: " + err);
+  }
+}
+
+/* ========= UI events ========= */
+document.getElementById("year-selector").addEventListener("change", (e) => {
+  updateDashboard(e.target.value);
+});
+
+window.addEventListener("DOMContentLoaded", () => {
+  // load default year (2012)
+  const defaultYear = document.getElementById("year-selector").value || 2012;
+  updateDashboard(defaultYear);
+});
+
+/* ========= Assistant popup ========= */
+const assistantBtn = document.getElementById("assistantBtn");
+const assistantModal = document.getElementById("assistantModal");
+assistantBtn.addEventListener("click", () => {
+  assistantModal.style.display = assistantModal.style.display === "block" ? "none" : "block";
+});
+
+document.getElementById("assistantSend").addEventListener("click", async () => {
+  const textEl = document.getElementById("assistantText");
+  const txt = textEl.value.trim();
+  if (!txt) return;
+  const box = document.getElementById("assistantMessages");
+  box.innerHTML += `<div style="margin-bottom:8px"><b>You:</b> ${txt}</div>`;
+
+  try {
+    const resp = await fetch("http://localhost:8000/chat", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ message: txt })
+    });
+    const j = await resp.json();
+    const reply = j.response || j.error || JSON.stringify(j);
+    box.innerHTML += `<div style="margin-bottom:8px;color:#444"><b>AI:</b> ${reply}</div>`;
+    box.scrollTop = box.scrollHeight;
+    textEl.value = "";
+  } catch (err) {
+    box.innerHTML += `<div style="margin-bottom:8px;color:red"><b>AI error:</b> ${err}</div>`;
+  }
+});
+</script>
+</body>
+</html>
